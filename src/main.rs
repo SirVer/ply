@@ -1,7 +1,7 @@
 #[macro_use]
 extern crate nom;
 
-use nom::{IResult, alpha, space, digit, alphanumeric, multispace, GetOutput};
+use nom::{IResult, alpha, space, not_line_ending, digit, alphanumeric, multispace, GetOutput};
 use std::fs::File;
 use std::io::prelude::*;
 use std::str::from_utf8;
@@ -27,6 +27,7 @@ struct Format {
 
 #[derive(Debug, PartialEq, Eq)]
 struct Header {
+    comments: Vec<String>,
     format: Format,
     elements: Vec<Element>,
 }
@@ -94,6 +95,7 @@ struct Element {
     count: i64,
     properties: Vec<Property>,
 }
+
 
 fn is_identifier(a: u8) -> bool {
     match a as char {
@@ -178,17 +180,28 @@ named!(element<Element>,
     )
 );
 
+named!(comment<String>,
+    chain!(
+        tag!("comment") ~
+        multispace ~
+        comment: map_res!(not_line_ending, from_utf8) ~
+        multispace,
+        || comment.to_string()
+    )
+);
 
 named!(header<&[u8], Header>,
     chain!(
         tag!("ply") ~
         multispace ~
         format: format ~
+        comments: many0!(comment) ~
         elements: many1!(element) ~
         tag!("end_header") ~
         multispace,
         || {
             Header {
+                comments: comments,
                 format: format,
                 elements: elements,
             }
