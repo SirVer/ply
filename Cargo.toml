@@ -1,0 +1,7 @@
+[package]
+name = "ply"
+version = "0.1.0"
+authors = ["Holger Rapp <HolgerRapp@gmx.net>"]
+
+[dependencies]
+nom = "~1.0.0"
