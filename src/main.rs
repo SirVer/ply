@@ -1,10 +1,12 @@
 #[macro_use]
 extern crate nom;
 
-use nom::{IResult, alpha, space, not_line_ending, digit, alphanumeric, multispace, GetOutput};
+use nom::{IResult, is_space, alpha, space, not_line_ending, digit, alphanumeric, multispace,
+          GetOutput};
 use std::fs::File;
 use std::io::prelude::*;
 use std::str::from_utf8;
+use std::str::FromStr;
 
 #[derive(Debug, PartialEq, Eq)]
 struct Version {
@@ -64,7 +66,7 @@ named!(format<Format>,
 
 
 #[derive(Debug, PartialEq, Eq)]
-enum DataType {
+enum ValueKind {
     Int8,
     UInt8,
     Int16,
@@ -77,10 +79,24 @@ enum DataType {
     Float64,
 }
 
+#[derive(Debug)]
+enum Value {
+    Int8(i8),
+    UInt8(u8),
+    Int16(i16),
+    UInt16(u16),
+    Int32(i32),
+    UInt32(u32),
+    Int64(i64),
+    UInt64(u64),
+    Float32(f32),
+    Float64(f64),
+}
+
 #[derive(Debug, PartialEq, Eq)]
 enum PropertyKind {
-    Scalar(DataType),
-    List(DataType, DataType),
+    Scalar(ValueKind),
+    List(ValueKind, ValueKind),
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -99,8 +115,8 @@ struct Element {
 
 fn is_identifier(a: u8) -> bool {
     match a as char {
-        'a' ... 'z' => true,
-        'A' ... 'Z' => true,
+        'a'...'z' => true,
+        'A'...'Z' => true,
         '_' => true,
         _ => false,
     }
@@ -110,31 +126,31 @@ named!(identifier<&[u8]>,
     take_while1!(is_identifier)
 );
 
-named!(data_type<DataType>,
+named!(data_type<ValueKind>,
    alt!(
-       map!(tag!("char"), |_| DataType::Int8) |
-       map!(tag!("uchar"), |_| DataType::UInt8) |
+       map!(tag!("char"), |_| ValueKind::Int8) |
+       map!(tag!("uchar"), |_| ValueKind::UInt8) |
 
-       map!(tag!("short"), |_| DataType::Int16) |
-       map!(tag!("ushort"), |_| DataType::UInt16) |
+       map!(tag!("short"), |_| ValueKind::Int16) |
+       map!(tag!("ushort"), |_| ValueKind::UInt16) |
 
-       map!(tag!("int64"), |_| DataType::Int64) |
-       map!(tag!("int32"), |_| DataType::Int32) |
-       map!(tag!("int16"), |_| DataType::Int16) |
-       map!(tag!("int8"), |_| DataType::Int8) |
-       map!(tag!("int"), |_| DataType::Int32) |
+       map!(tag!("int64"), |_| ValueKind::Int64) |
+       map!(tag!("int32"), |_| ValueKind::Int32) |
+       map!(tag!("int16"), |_| ValueKind::Int16) |
+       map!(tag!("int8"), |_| ValueKind::Int8) |
+       map!(tag!("int"), |_| ValueKind::Int32) |
 
-       map!(tag!("uint8"), |_| DataType::UInt8) |
-       map!(tag!("uint16"), |_| DataType::UInt16) |
-       map!(tag!("uint32"), |_| DataType::UInt32) |
-       map!(tag!("uint64"), |_| DataType::UInt64) |
-       map!(tag!("uint"), |_| DataType::UInt32) |
+       map!(tag!("uint8"), |_| ValueKind::UInt8) |
+       map!(tag!("uint16"), |_| ValueKind::UInt16) |
+       map!(tag!("uint32"), |_| ValueKind::UInt32) |
+       map!(tag!("uint64"), |_| ValueKind::UInt64) |
+       map!(tag!("uint"), |_| ValueKind::UInt32) |
 
-       map!(tag!("float32"), |_| DataType::Float32) |
-       map!(tag!("float64"), |_| DataType::Float64) |
-       map!(tag!("float"), |_| DataType::Float32) |
+       map!(tag!("float32"), |_| ValueKind::Float32) |
+       map!(tag!("float64"), |_| ValueKind::Float64) |
+       map!(tag!("float"), |_| ValueKind::Float32) |
 
-       map!(tag!("double"), |_| DataType::Float64)
+       map!(tag!("double"), |_| ValueKind::Float64)
    )
 );
 
@@ -209,15 +225,62 @@ named!(header<&[u8], Header>,
     )
 );
 
+fn ascii_value(input: &[u8], value_kind: ValueKind) -> IResult<&[u8], Value> {
+    let token = chain!(input,
+        token: map_res!(is_not!(b" \n"), from_utf8) ~
+        multispace,
+        || token
+    );
+
+    match token {
+        IResult::Error(a) => IResult::Error(a),
+        IResult::Incomplete(i) => IResult::Incomplete(i),
+        IResult::Done(remaining, out) => {
+            IResult::Done(remaining,
+                          match value_kind {
+                              ValueKind::Float32 => Value::Float32(f32::from_str(out).unwrap()),
+                              _ => unimplemented!(),
+                          })
+        }
+    }
+}
+
+fn value<'a>(input: &'a [u8],
+             format_kind: &FormatKind,
+             value_kind: ValueKind)
+             -> IResult<&'a [u8], Value> {
+    match *format_kind {
+        FormatKind::Ascii => ascii_value(input, value_kind),
+        FormatKind::LittleEndian | FormatKind::BigEndian => unimplemented!(),
+    }
+}
+
+fn body<'a>(input: &'a [u8], header: &Header) -> IResult<&'a [u8], Value> {
+    // NOCOM(#sirver): Assuming ASCII format for this discussion.
+    for element in &header.elements[..1] { // NOCOM(#sirver): for debug reasons only use the first
+        // The 'count' entry defines how many lines of property entries are coming now.
+        for _ in 0..element.count {
+            for property in &element.properties {
+                // let y = value(input, &header.format.kind, ValueKind::Float32);
+                // let y = value(input, &header.format.kind, ValueKind::Float32);
+                println!("#sirver property: {:#?}", property);
+            }
+        }
+    }
+    // NOCOM(#sirver): this is only here to make the compiler happy
+    value(input, &header.format.kind, ValueKind::Float32)
+}
+
 #[test]
 fn parse_category_test() {
     let input = b"property list uint8 int32 vertex_indices\n";
     let res = property(input);
     if let IResult::Done(_, res) = res {
         assert_eq!(Property {
-            kind: PropertyKind::List(DataType::UInt8, DataType::Int32),
-            name: "vertex_indices".into(),
-        }, res);
+                       kind: PropertyKind::List(ValueKind::UInt8, ValueKind::Int32),
+                       name: "vertex_indices".into(),
+                   },
+                   res);
     } else {
         panic!("res: {:?}", res);
     }
@@ -231,12 +294,21 @@ fn main() {
         .read_to_end(&mut v)
         .unwrap();
     match header(&v) {
-        IResult::Done(_, ply) => {
-            println!("#sirver ply: {:#?}", ply);
+        IResult::Done(remaining, header) => {
+            println!("#sirver header: {:#?}", header);
+            match body(remaining, &header) {
+                IResult::Done(remaining, body) => {
+                    println!("#sirver body: {:#?}", body);
+                }
+                IResult::Error(err) => panic!("Error: {:?}", err),
+                IResult::Incomplete(a) => {
+                    println!("#sirver a: {:#?}", a);
+                }
+            }
         }
         IResult::Error(err) => panic!("Error: {:?}", err),
         IResult::Incomplete(a) => {
             println!("#sirver a: {:#?}", a);
-        },
+        }
     }
 }
